@@ -1,0 +1,1613 @@
+---
+title: "Cutthroat_Trout_Phylogeny"
+author: "Peter Searle"
+date: "2023-05-04"
+output: html_document
+---
+
+# QC
+
+## PacBio
+
+### Generate sequence statistics from raw reads
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=12:00:00 
+#SBATCH --ntasks=1
+#SBATCH --nodes=1 
+#SBATCH --mem=2G 
+#SBATCH -J "seqstats" 
+
+export PATH=$PATH:/home/kokko/programs/seqstats
+
+cd ~/compute/cutthroat/data/raw/pacbio
+
+> stats.txt
+
+printf "run n \n" >> stats.txt
+
+for run in run1 run2
+do
+  cd ${run}
+  stats=`samtools view -c *.subreads.bam`
+  cd ..
+  printf "${run} ${stats}\n" >> stats.txt
+done
+
+```
+
+### Assess quality using LongQC
+
+```{bash eval=FALSE}
+
+conda activate longqc
+
+for dir in run1 run2
+do
+  sbatch ../../../code/longqc.sh ${dir}
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=48:00:00   # walltime
+#SBATCH --ntasks=24   # number of processor cores (i.e. tasks)
+#SBATCH --nodes=1   # number of nodes
+#SBATCH --mem-per-cpu=10G   # memory per CPU core
+#SBATCH -J "longqc"   # job name
+#SBATCH --mail-user=andrealeenak@gmail.com   # email address
+#SBATCH --mail-type=END
+#SBATCH --mail-type=FAIL
+
+export PATH=$PATH:/home/kokko/programs/LongQC
+
+python /home/kokko/programs/LongQC/longQC.py sampleqc \
+  --preset pb-sequel \
+  --output ${1} \
+  --ncpu 24 \
+  --transcript \
+  /home/kokko/compute/cutthroat/data/raw/pacbio/${1}/*.subreads.bam
+
+mv slurm-${SLURM_JOB_ID}.out ${1}/
+
+```
+
+## Illumina
+
+Assess sequence quality using FastQC
+
+```{bash eval=FALSE}
+
+conda activate fastqc
+
+for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Greenback Humboldt LWFBlackCR UMCR
+do
+  sbatch ../../../code/fastqc.sh ${species}
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=01:00:00 
+#SBATCH --ntasks=2
+#SBATCH --nodes=1
+#SBATCH --mem-per-cpu=256MB 
+#SBATCH -J "fastqc" 
+
+cd ~/compute/cutthroat/data/raw/illumina/${species}
+
+files=`ls | grep "*.fq.gz" | tr '\n' ' '` 
+count=`grep -c ".fq.gz" ${files}`
+
+fastqc --threads ${count} ${files} --outdir ~/compute/cutthroat/data/qc/fastqc/${species}
+
+```
+
+# Assembly
+
+## PacBio Assembly
+
+### Consensus generation
+
+Generate circular consensus sequences (CCS). The only effective way to perform this task is to parallelize the process on multiple nodes.
+
+```{bash eval=FALSE}
+
+mamba activate isoseq3
+
+cd ~/compute/cutthroat/data/assembly/isoseq3/1_ccs/1.1_ccs_chunk
+
+for dir in run1 run2
+do
+  sbatch ../../../code/chunk.sh ${dir}
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=120:00:00 
+#SBATCH --nodes=10 
+#SBATCH --mem=10G 
+#SBATCH -J ccs_chunk 
+
+cd $1
+
+dir="~/compute/cutthroat/data/raw/pacbio/${1}"
+movie=`ls ${dir} | grep -e "m[0-9]" | head -n 1 | cut -d "." -f 1`
+
+srun -N 1 ccs  "$dir/${movie}.subreads.bam" "${movie}.ccs.1.bam" --chunk 1/10 &
+srun -N 1 ccs  "$dir/${movie}.subreads.bam" "${movie}.ccs.2.bam" --chunk 2/10 &
+srun -N 1 ccs  "$dir/${movie}.subreads.bam" "${movie}.ccs.3.bam" --chunk 3/10 &
+srun -N 1 ccs  "$dir/${movie}.subreads.bam" "${movie}.ccs.4.bam" --chunk 4/10 &
+srun -N 1 ccs  "$dir/${movie}.subreads.bam" "${movie}.ccs.5.bam" --chunk 5/10 &
+srun -N 1 ccs  "$dir/${movie}.subreads.bam" "${movie}.ccs.6.bam" --chunk 6/10 &
+srun -N 1 ccs  "$dir/${movie}.subreads.bam" "${movie}.ccs.7.bam" --chunk 7/10 &
+srun -N 1 ccs  "$dir/${movie}.subreads.bam" "${movie}.ccs.8.bam" --chunk 8/10 &
+srun -N 1 ccs  "$dir/${movie}.subreads.bam" "${movie}.ccs.9.bam" --chunk 9/10 &
+srun -N 1 ccs  "$dir/${movie}.subreads.bam" "${movie}.ccs.10.bam" --chunk 10/10 &
+wait
+
+```
+
+Merge chunks and index
+
+```{bash eval=FALSE}
+
+mamba activate isoseq3
+
+cd ~/compute/cutthroat/data/assembly/isoseq3/1_ccs/1.2_index
+
+for dir in run1 run2
+do
+  sbatch ../../../code/mergeindex.sh ${dir}
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=72:00:00 
+#SBATCH --ntasks=12 
+#SBATCH --nodes=1 
+#SBATCH --mem-per-cpu=5G  
+#SBATCH -J "mergeindex" 
+
+cd $1
+
+dir="~/compute/cutthroat/data/assembly/isoseq3/1_ccs/1.1_ccs_chunk/${1}"
+movie=`ls ${dir} | grep -e "m[0-9]" | head -n 1 | cut -d "." -f 1`
+
+pbmerge -o ${movie}.ccs.bam ${dir}/${movie}.ccs.*.bam
+pbindex ${movie}.ccs.bam
+
+```
+
+Generate sequence statistics using seqstats
+
+```{bash eval=FALSE}
+
+mamba activate isoseq3
+
+cd ~/compute/cutthroat/data/assembly/isoseq3/1_ccs/1.4_index
+
+for dir in run1 run2
+do
+  sbatch ../../../code/seqstats.sh ${dir}
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=04:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=6
+#SBATCH --mem=5G 
+#SBATCH -J seqstats
+
+cd $1
+
+dir="~/compute/cutthroat/data/assembly/isoseq3/1_ccs/1.2_index/${1}"
+movie=`ls ${dir} | grep -e "m[0-9]" | head -n 1 | cut -d "." -f 1`
+
+bamtools convert -format fasta -in ${dir}/${movie}.ccs.bam > ${movie}.ccs.fasta
+
+~/programs/seqstats/seqstats ${movie}.ccs.fasta > ${movie}.ccs.stats.txt
+
+```
+
+### Primer removal and demultiplexing
+
+IsoSeq_Primers_12_Barcodes_v1.fasta
+>bc1001_5p
+CACATATCAGAGTGCGGCAATGAAGTCGCAGGGTTGGGG
+>bc1002_5p
+ACACACAGACTGTGAGGCAATGAAGTCGCAGGGTTGGGG
+>bc1003_5p
+ACACATCTCGTGAGAGGCAATGAAGTCGCAGGGTTGGGG
+>bc1004_5p
+CACGCACACACGCGCGGCAATGAAGTCGCAGGGTTGGGG
+>bc1005_5p
+CACTCGACTCTCGCGTGCAATGAAGTCGCAGGGTTGGGG
+>bc1006_5p
+CATATATATCAGCTGTGCAATGAAGTCGCAGGGTTGGGG
+>bc1008_5p
+ACAGTCGAGCGCTGCGGCAATGAAGTCGCAGGGTTGGGG
+>bc1012_5p
+ACACTAGATCGCGTGTGCAATGAAGTCGCAGGGTTGGGG
+>bc1018_5p
+TCACGTGCTCACTGTGGCAATGAAGTCGCAGGGTTGGGG
+>bc1019_5p
+ACACACTCTATCAGATGCAATGAAGTCGCAGGGTTGGGG
+>bc1020_5p
+CACGACACGACGATGTGCAATGAAGTCGCAGGGTTGGGG
+>bc1023_5p
+CAGAGAGATATCTCTGGCAATGAAGTCGCAGGGTTGGGG
+>bc1001_3p
+GTACTCTGCGTTGATACCACTGCTTCGCACTCTGATATGTG
+>bc1002_3p
+GTACTCTGCGTTGATACCACTGCTTCTCACAGTCTGTGTGT
+>bc1003_3p
+GTACTCTGCGTTGATACCACTGCTTCTCTCACGAGATGTGT
+>bc1004_3p
+GTACTCTGCGTTGATACCACTGCTTCGCGCGTGTGTGCGTG
+>bc1005_3p
+GTACTCTGCGTTGATACCACTGCTTACGCGAGAGTCGAGTG
+>bc1006_3p
+GTACTCTGCGTTGATACCACTGCTTACAGCTGATATATATG
+>bc1008_3p
+GTACTCTGCGTTGATACCACTGCTTCGCAGCGCTCGACTGT
+>bc1012_3p
+GTACTCTGCGTTGATACCACTGCTTACACGCGATCTAGTGT
+>bc1018_3p
+GTACTCTGCGTTGATACCACTGCTTCACAGTGAGCACGTGA
+>bc1019_3p
+GTACTCTGCGTTGATACCACTGCTTATCTGATAGAGTGTGT
+>bc1020_3p
+GTACTCTGCGTTGATACCACTGCTTACATCGTCGTGTCGTG
+>bc1023_3p
+GTACTCTGCGTTGATACCACTGCTTCAGAGATATCTCTCTG
+
+```{bash eval=FALSE}
+
+mamba activate isoseq3
+
+cd ~/compute/cutthroat/data/assembly/isoseq3/2_demultiplex/2.1_lima
+
+for dir in run1 run2
+do
+  sbatch ../../../code/demultiplex.sh ${dir}
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=72:00:00   
+#SBATCH --nodes=1
+#SBATCH --ntasks=12
+#SBATCH --mem-per-cpu=1G
+#SBATCH -J demultiplex
+
+cd $1
+
+dir1="~/compute/cutthroat/data/assembly/isoseq3/1_ccs/1.2_index/${1}"
+dir2="~/compute/cutthroat/data/assembly/isoseq3/1_ccs/1.3_barcodes/${1}"
+movie=`ls ${dir1} | grep -e "m[0-9]" | head -n 1 | cut -d "." -f 1`
+
+lima ${dir1}/${movie}.ccs.bam ${dir2}/IsoSeq_Primers_12_Barcodes_v1.fasta ${movie}.fl.bam --isoseq --peek-guess
+
+```
+
+Generate sequence statistics using seqstats
+
+```{bash eval=FALSE}
+
+mamba activate isoseq3
+
+cd ~/compute/cutthroat/data/assembly/isoseq3/2_demultiplex/2.2_seqstats
+
+for dir in run1 run2
+do
+  sbatch ../../../code/seqstats.sh ${dir}
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=04:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=6
+#SBATCH --mem=5G 
+#SBATCH -J seqstats
+
+cd $1
+
+dir="~/compute/cutthroat/data/assembly/isoseq3/2_demultiplex/2.1_lima/${1}"
+movie=`ls ${dir} | grep -e "m[0-9]" | head -n 1 | cut -d "." -f 1`
+files=`ls ${dir}/*.bam | tr "\n" " "`
+
+for file in ${files}
+do
+  barcode=`echo ${file} | cut -d "." -f 3 | cut -d "_" -f 1`
+  bamtools convert -format fasta -in ${dir}/${file} > ${movie}.${barcode}.ccs.fasta
+  ~/programs/seqstats/seqstats ${movie}.${barcode}.ccs.fasta > ${movie}.${barcode}.ccs.stats.txt
+done
+
+```
+
+### Refine
+
+Trim off poly(A) tails and remove concatemers
+
+```{bash eval=FALSE}
+
+mamba activate isoseq3
+
+cd ~/compute/cutthroat/data/assembly/isoseq3/3_refine/3.1_refine
+
+for dir in run1 run2
+do
+  sbatch ../../../code/refine.sh ${dir}
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=72:00:00 
+#SBATCH --nodes=1 
+#SBATCH --ntasks=12 
+#SBATCH --mem-per-cpu=1G 
+#SBATCH -J refine
+
+cd $1
+
+dir1="~/compute/cutthroat/data/assembly/isoseq3/2_demultiplex/2.1_lima/${1}"
+dir2="~/compute/cutthroat/data/assembly/isoseq3/1_ccs/1.3_barcodes/${1}"
+movie=`ls ${dir} | grep -e "m[0-9]" | head -n 1 | cut -d "." -f 1`
+files=`ls ${dir}/*.bam | tr "\n" " "`
+
+for file in ${files}
+do
+  barcode=`echo ${file} | cut -d "." -f 3`
+  isoseq3 refine ${dir1}/${file} ${dir2}/IsoSeq_Primers_12_Barcodes_v1.fasta ${movie}.flnc.${barcode}.bam --require-polya
+done
+
+```
+
+Generate sequence statistics using seqstats
+
+```{bash eval=FALSE}
+
+mamba activate isoseq3
+
+cd ~/compute/cutthroat/data/assembly/isoseq3/3_refine/3.2_seqstats
+
+for dir in run1 run2
+do
+  sbatch ../../../code/seqstats.sh ${dir}
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=04:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=6
+#SBATCH --mem=5G 
+#SBATCH -J seqstats
+
+cd $1
+
+dir="~/compute/cutthroat/data/assembly/isoseq3/3_refine/3.1_refine/${1}"
+movie=`ls ${dir} | grep -e "m[0-9]" | head -n 1 | cut -d "." -f 1`
+files=`ls ${dir}/*.bam | tr "\n" " "`
+
+for file in ${files}
+do
+  barcode=`echo ${file} | cut -d "." -f 3 | cut -d "_" -f 1`
+  bamtools convert -format fasta -in ${dir}/${file} > ${movie}.${barcode}.ccs.fasta
+  ~/programs/seqstats/seqstats ${movie}.${barcode}.ccs.fasta > ${movie}.${barcode}.ccs.stats.txt
+done
+
+```
+
+### Cluster
+
+Perform clustering to reduce sequence redundancy
+
+```{bash eval=FALSE}
+
+mamba activate isoseq3
+
+cd ~/compute/cutthroat/data/assembly/isoseq3/4_cluster/4.1_cluster
+
+for dir in run1 run2
+do
+  sbatch ../../../code/cluster.sh ${dir}
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=72:00:00 
+#SBATCH --nodes=1 
+#SBATCH --ntasks=28 
+#SBATCH --mem-per-cpu=4G 
+#SBATCH -J cluster
+
+cd $1
+
+dir="~/compute/cutthroat/data/assembly/isoseq3/3_refine/3.1_refine/${1}"
+movie=`ls ${dir} | grep -e "m[0-9]" | head -n 1 | cut -d "." -f 1`
+files=`ls ${dir}/*.bam | tr "\n" " "`
+
+for file in ${files}
+do
+  barcode=`echo ${file} | cut -d "." -f 3`
+  isoseq3 cluster ${dir1}/${file} ${movie}.flnc.${barcode}.clustered.bam --verbose --use-qvs
+done
+
+```
+
+Generate sequence statistics using seqstats. Only use high quality transcript moving forward.
+
+```{bash eval=FALSE}
+
+mamba activate isoseq3
+
+cd ~/compute/cutthroat/data/assembly/isoseq3/4_cluster/4.2_seqstats
+
+for dir in run1 run2
+do
+  sbatch ../../../code/seqstats.sh ${dir}
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=04:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=6
+#SBATCH --mem=5G 
+#SBATCH -J seqstats
+
+cd $1
+
+dir="~/compute/cutthroat/data/assembly/isoseq3/4_cluster/4.1_cluster/${1}"
+movie=`ls ${dir} | grep -e "m[0-9]" | head -n 1 | cut -d "." -f 1`
+files=`ls ${dir}/*.hq.fasta.gz | tr "\n" " "`
+
+for file in ${files}
+do
+  barcode=`echo ${file} | cut -d "." -f 3`
+  ~/programs/seqstats/seqstats ${dir}/${file} > ${movie}.flnc.${barcode}.clustered.hq.stats.txt
+done
+
+```
+
+Unzip files
+
+```{bash eval=FALSE}
+
+dir="~/compute/cutthroat/data/assembly/isoseq3/4_cluster/"
+
+cd "${dir}/4.1_cluster"
+
+for run in run1 run2
+do
+  cd ${run}
+  for file in *.hq.fasta.gz
+  do
+    gunzip $file
+    mv ${file} "${dir}/4.3_unzipped/${run}"
+  done
+  cd "${dir}/4.1_cluster"
+done
+
+```
+
+## Illumina Assembly
+
+### Trim raw data using Trim Galore! and evaluate quality again using FastQC
+
+```{bash eval=FALSE}
+
+mamba activate trim-galore
+
+cd ~/compute/cutthroat/data/assembly/trim-galore
+
+for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Greenback Humboldt LWFBlackCR UMCR
+do
+  sbatch ../../../code/trim-galore.sh ${species}
+done
+
+```
+
+```{bash eval=FALSE}
+
+# trim-galore.sh
+
+#!/bin/bash
+
+#SBATCH --time=04:00:00 
+#SBATCH --ntasks=12 
+#SBATCH --nodes=1  
+#SBATCH --mem=6GB 
+#SBATCH -J "trim-galore"
+
+dir="~/compute/cutthroat/data/raw/illumina"
+
+trim_galore --output_dir ${1} --fastqc --paired ${dir}/${1}/${1}_R1.fq.gz ${dir}/illumina/${1}/${1}_R2.fq.gz 
+
+mv slurm-${SLURM_JOB_ID}.out ${1}/
+
+```
+
+### Assemble de novo transcriptomes using rnaSPAdes
+
+```{bash eval=FALSE}
+
+for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Greenback Humboldt LWFBlackCR UMCR
+do
+  sbatch ../../../code/spades.sh ${species}
+done
+
+# The following parameters are overkill for all but the Greenback which had 2x250 PE and took much longer to assemble
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=48:00:00
+#SBATCH --ntasks=24 
+#SBATCH --nodes=1 
+#SBATCH --mem=128G 
+#SBATCH -J "spades" 
+
+export PATH=$PATH:/home/kokko/programs/SPAdes-3.15.5-Linux
+
+spades.py -1 ~/compute/cutthroat/data/assembly/trim-galore/${1}/${1}_R1_val_1.fq.gz \
+  -2 ~/compute/cutthroat/data/assembly/trim-galore/${1}/${1}_R2_val_2.fq.gz \
+  -o ~/compute/cutthroat/data/assembly/spades/${1} \
+  --rna -t 24 
+
+mv slurm-${SLURM_JOB_ID}.out ${1}/
+
+cd ${1}
+
+mv transcripts.fasta ${1}_spades.fasta
+
+```
+
+Use seqstats to generate assembly statistics
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=1:00:00
+#SBATCH --ntasks=24
+#SBATCH --nodes=1 
+#SBATCH --mem=1G
+#SBATCH -J "seqstats"
+
+cd ~/compute/cutthroat/data/assembly/spades/
+
+export PATH=$PATH:/home/kokko/programs/seqstats
+
+> stats.txt
+
+printf "species n n50\n" >> stats.txt
+
+for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Greenback Humboldt LWFBlackCR UMCR
+do
+  cd ${species}
+  data=`seqstats ${species}_spades.fasta`
+  stats=`echo ${data} | awk '{print $3, $18}'`
+  cd ..
+  printf "${species} ${stats}\n" >> stats.txt
+done
+
+```
+
+### Assemble de novo transcriptomes using Trinity
+
+```{bash eval=FALSE}
+
+mamba activate trinity
+
+for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Greenback Humboldt LWFBlackCR UMCR
+do
+  sbatch ../../../code/trinity.sh ${species}
+done
+
+# Didn't end up submitting all the jobs simultaneously because Trinity uses an insane amount of files per run and uses up the quota
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=48:00:00
+#SBATCH --ntasks=24
+#SBATCH --nodes=1 
+#SBATCH --mem=50G 
+#SBATCH -J "trinity"
+
+Trinity --seqType fq \
+  --max_memory 50G \
+  --left  ~/compute/cutthroat/data/assembly/trim-galore/${1}/${1}_R1_val_1.fq.gz \
+  --right ~/compute/cutthroat/data/assembly/trim-galore/${1}/${1}_R2_val_2.fq.gz \
+  --CPU 24 \
+  --output ~/compute/cutthroat/data/assembly/trinity/${1}_trinity \
+  --full_cleanup
+
+mkdir ${1}
+mv slurm-${SLURM_JOB_ID}.out ${1}
+mv ${1}_trinity* ${1}
+cd ${1}
+mv ${1}_trinity.Trinity.fasta ${1}_trinity.fasta
+mv ${1}_trinity.Trinity.fasta.gene_trans_map ${1}_trinity.fasta.gene_trans_map
+
+```
+
+Use seqstats to generate assembly statistics
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=1:00:00
+#SBATCH --ntasks=24
+#SBATCH --nodes=1 
+#SBATCH --mem=1G
+#SBATCH -J "seqstats"
+
+cd ~/compute/cutthroat/data/assembly/trinity/
+
+export PATH=$PATH:/home/kokko/programs/seqstats
+
+> stats.txt
+
+printf "species n n50\n" >> stats.txt
+
+for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Greenback Humboldt LWFBlackCR UMCR
+do
+  cd ${species}
+  data=`seqstats ${species}_trinity.fasta`
+  stats=`echo ${data} | awk '{print $3, $18}'`
+  cd ..
+  printf "${species} ${stats}\n" >> stats.txt
+done
+
+```
+
+### Combine transcriptomes with Transfuse
+
+```{bash eval=FALSE}
+
+for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Greenback Humboldt LWFBlackCR UMCR
+do
+  sbatch ../../../code/transfuse.sh ${species}
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=48:00:00 
+#SBATCH --ntasks=12 
+#SBATCH --nodes=1 
+#SBATCH --mem-per-cpu=5G 
+#SBATCH -J "transfuse"
+
+export PATH=$PATH:/home/kokko/programs/transfuse-0.5.0-linux-x86_64
+
+echo ${1}
+
+mkdir ${1}
+cd ${1}
+
+transfuse --assemblies ~/compute/cutthroat/data/assembly/trinity/${1}/${1}_trinity.fasta,~/compute/cutthroat/data/assembly/spades/${1}/${1}_spades.fasta \
+  --left ~/compute/cutthroat/data/assembly/trim-galore/${1}/${1}_R1_val_1.fq.gz \
+  --right ~/compute/cutthroat/data/assembly/trim-galore/${1}/${1}_R2_val_2.fq.gz \
+  --output ${1}.fasta \
+  --threads 12
+
+mv ../slurm-${SLURM_JOB_ID}.out .
+
+```
+
+Use seqstats to generate assembly statistics
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=1:00:00
+#SBATCH --ntasks=24
+#SBATCH --nodes=1 
+#SBATCH --mem=1G
+#SBATCH -J "seqstats"
+
+cd ~/compute/cutthroat/data/assembly/transfuse/
+
+export PATH=$PATH:/home/kokko/programs/seqstats
+
+> stats.txt
+
+printf "species n n50\n" >> stats.txt
+
+for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Greenback Humboldt LWFBlackCR UMCR
+do
+  cd ${species}
+  data=`seqstats ${species}.fasta`
+  stats=`echo ${data} | awk '{print $3, $18}'`
+  cd ..
+  printf "${species} ${stats}\n" >> stats.txt
+done
+
+```
+
+## Remove redundant transcripts with Cd-hit-est
+
+Two of the species sequenced using PacBio were sequenced twice including: Yellowstone (Heart and Muscle) and Westlope (2021 and 2022). We concatenated these assemblies prior to removing duplicate transcripts with Cd-Hit-Est.
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+cd ~/compute/cutthroat/data/assembly/combine
+
+dir="~/compute/cutthroat/data/assembly/isoseq3/4_cluster/4.3_unzipped"
+
+# some of the transcripts can have the same name so we appended _1 or _2 to prevent issues when combining the files
+
+sed 's/\//_1_/g' ${dir}/run1/m54336U_200529_200122.flnc.bc1002_5p--bc1002_3p.clustered.hq.fasta \
+  > Yellowstone1.fasta
+
+count=`grep -c ">" Yellowstone1.fasta`
+printf "Yellowstone1 ${count}\n"
+
+sed 's/\//_2_/g' ${dir}/run1/m54336U_200529_200122.flnc.bc1005_5p--bc1005_3p.clustered.hq.fasta \
+  > Yellowstone2.fasta
+
+count=`grep -c ">" Yellowstone2.fasta`
+printf "Yellowstone2 ${count}\n"
+
+sed 's/\//_1_/g' ${dir}/run1/m54336U_200529_200122.flnc.bc1018_5p--bc1018_3p.clustered.hq.fasta \
+  > Westslope1.fasta
+
+count=`grep -c ">" Westslope1.fasta`
+printf "Westslope1 ${count}\n"
+
+sed 's/\//_2_/g' ${dir}/run2/m64140_220314_131357.bc1003.clustered.hq.fasta \
+  > Westslope2.fasta
+
+count=`grep -c ">" Westslope2.fasta`
+printf "Westslope2 ${count}\n"
+
+# combine files
+
+cat Yellowstone1.fasta Yellowstone2.fasta >> Yellowstone_combined.fasta
+
+count=`grep -c ">" Yellowstone_combined.fasta`
+printf "Yellowstone_combined ${count}\n"
+
+cat Westslope1.fasta Westslope2.fasta >> Westslope_combined.fasta
+
+count=`grep -c ">" Westslope_combined.fasta`
+printf "Westslope_combined ${count}\n"
+
+```
+
+Copy all the files from different assemblies into same folder and rename prior to running cd-hit-est
+
+```{bash eval=FALSE}
+
+cd ~/compute/cutthroat/data/assembly/cd-hit/transcriptomes
+
+# copy combined, PacBio sequences
+
+cp ~/compute/cutthroat/data/assembly/combine/Westslope_combined.fasta Westslope.fasta
+cp ~/compute/cutthroat/data/assembly/combine/Yellowstone_combined.fasta Yellowstone.fasta
+
+# copy single PacBio sequences
+
+cp ~/compute/cutthroat/data/assembly/isoseq3/4_cluster/4.3_unzipped/run1/m54336U_200529_200122.flnc.bc1020_5p--bc1020_3p.clustered.hq.fasta Coastal.fasta
+
+cp ~/compute/cutthroat/data/assembly/isoseq3/4_cluster/4.3_unzipped/run1/m54336U_200529_200122.flnc.bc1023_5p--bc1023_3p.clustered.hq.fasta Lahontan.fasta
+
+cp ~/compute/cutthroat/data/assembly/isoseq3/4_cluster/4.3_unzipped/run2/m64140_220314_131357.bc1001.clustered.hq.fasta RioGrande.fasta
+
+# copy transfused Illumina assemblies
+
+for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Greenback Humboldt LWFBlackCR UMCR
+do
+  cp ~/compute/cutthroat/data/assembly/transfuse/${species}/${species}.fasta .
+done
+
+```
+
+```{bash eval=FALSE}
+
+mamba activate cd-hit
+
+cd ~/compute/cutthroat/data/assembly/cd-hit
+
+for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Coastal Greenback Humboldt Lahontan  LWFBlackCR Riogrande UMCR Westslope Yellowstone
+do
+  sbatch ../../../code/cd-hit.sh ${species}
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=12:00:00 
+#SBATCH --ntasks=24 
+#SBATCH --nodes=1 
+#SBATCH --mem=2GB 
+#SBATCH -J "cd-hit" 
+
+mkdir ${1}
+cd ${1}
+
+cd-hit-est -i ~/compute/cutthroat/data/assembly/cd-hit/transcriptomes/${1}.fasta \
+  -o ${1}_cdhit.fasta \
+  -c .88 -n 7 -M 0 -T 0
+
+mv ../slurm-${SLURM_JOB_ID}.out .
+
+```
+
+Use seqstats to generate assembly statistics
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=1:00:00
+#SBATCH --ntasks=24
+#SBATCH --nodes=1 
+#SBATCH --mem=1G
+#SBATCH -J "seqstats"
+
+cd ~/compute/cutthroat/data/assembly/cd-hit
+
+export PATH=$PATH:/home/kokko/programs/seqstats
+
+> stats.txt
+
+printf "species n n50\n" >> stats.txt
+
+for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Coastal Greenback Humboldt Lahontan  LWFBlackCR Riogrande UMCR Westslope Yellowstone
+do
+  cd ${species}
+  data=`seqstats ${species}_cdhit.fasta`
+  stats=`echo ${data} | awk '{print $3, $18}'`
+  cd ..
+  printf "${species} ${stats}\n" >> stats.txt
+done
+
+```
+
+## Assess transcriptome completeness with BUSCO
+
+Prior to running BUSCO download outgroup transcriptomes
+
+```{bash eval=FALSE}
+
+cd ~/compute/cutthroat/data/assembly/cd-hit
+
+wget https://sra-download.ncbi.nlm.nih.gov/traces/wgs03/wgs_aux/GF/IN/GFIN01/GFIN01.1.fsa_nt.gz
+mkdir Rainbow
+mv filename Rainbow/Rainbow.fasta
+
+wget https://sra-download.ncbi.nlm.nih.gov/traces/wgs03/wgs_aux/GF/UW/GFUW01/GFUW01.1.fsa_nt.gz
+mkdir Pink
+mv filename Pink/Pink.fasta
+
+wget https://sra-download.ncbi.nlm.nih.gov/traces/wgs03/wgs_aux/GD/QG/GDQG01/GDQG01.1.fsa_nt.gz
+mkdir Coho
+mv filename Coho/Coho.fasta
+
+```
+
+```{bash eval=FALSE}
+
+mamba activate busco
+
+cd ~/compute/cutthroat/data/annotation/busco
+
+for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Coastal Coho Greenback Humboldt Lahontan LWFBlackCR Pink Rainbow Riogrande UMCR Westslope Yellowstone
+do
+  sbatch ../../../code/busco.sh ${species}
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=02:00:00 
+#SBATCH --ntasks=24 
+#SBATCH --nodes=1 
+#SBATCH --mem-per-cpu=5G 
+#SBATCH -J "busco"
+
+busco --in ~/compute/cutthroat/data/assembly/cd-hit/${1}/*.fasta \
+  --out ${1} \
+  --mode transcriptome \
+  --lineage_dataset actinopterygii_odb10 \
+  --cpu 24 \
+  --offline \
+  -f \
+  --download_path ~/compute/cutthroat/data/annotation/busco/busco_downloads
+
+mv slurm-${SLURM_JOB_ID}.out ${1}/
+
+```
+
+Create file with BUSCO results to generate custom plot
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+> busco_results.txt
+
+printf "species complete single duplicated fragmented missing total\n" >> busco_results.txt
+
+for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Coastal Coho Greenback Humboldt Lahontan LWFBlackCR Pink Rainbow Riogrande UMCR Westslope Yellowstone
+do
+  cd ${species}
+  file='*.txt'
+  complete=`grep "(C)" ${file} | awk '{print $1}'`
+  single=`grep "(S)" ${file} | awk '{print $1}'`
+  duplicated=`grep "(D)" ${file} | awk '{print $1}'`
+  fragmented=`grep "(F)" ${file} | awk '{print $1}'`
+  missing=`grep "(M)" ${file} | awk '{print $1}'`
+  total=`grep "Total BUSCO groups searched" ${file} | awk '{print $1}'`
+  cd ..
+  printf "${species} ${complete} ${single} ${duplicated} ${fragmented} ${missing} ${total}\n" >> busco_results.txt
+done
+
+```
+
+Use R to generate plots of BUSCO results
+
+```{r eval=FALSE}
+
+library(tidyverse)
+
+path = "~/compute/cutthroat/data/annotation/busco/busco_results.txt"
+
+`%ni%` <- Negate(`%in%`)
+
+busco <- read.csv(file = path, sep = " ") %>% 
+  mutate(completeP = (complete/total)*100) %>%
+  mutate(singleP = (single/total)*100) %>%
+  mutate(duplicatedP = (duplicated/total)*100) %>%
+  mutate(fragmentedP = (fragmented/total)*100) %>%
+  mutate(missingP = (missing/total)*100) %>%
+  mutate(`Complete (Single)` = (single/total)*100) %>%
+  mutate(`Complete (Duplicate)` = (duplicated/total)*100) %>%
+  mutate(Fragmented = (fragmented/total)*100) %>%
+  mutate(Missing = (missing/total)*100) %>%
+  filter(species %ni% c("Pink", "Coho", "Rainbow"))
+
+busco$species <- c("Bear River Bonneville", "Colorado Green (Beaver Creek)",
+                   "Colorado Green (Bobtail Creek)", "Bonneville (Diamond Fork River)", 
+                   "Bonneville (Big Wash Creek)", "Coastal", "Greenback", "Humboldt", "Lahontan", 
+                   "Colorado Blue (LWF Blacks Fork)", "Rio Grande","Colorado Blue (UM Creek)", 
+                   "Westslope", "Yellowstone")
+
+busco$species <- factor(busco$species,
+                        levels = c("Yellowstone", "Westslope", "Rio Grande",
+                                   "Lahontan", "Humboldt", "Greenback", 
+                                   "Colorado Green (Bobtail Creek)", "Colorado Green (Beaver Creek)", 
+                                   "Colorado Blue (UM Creek)", "Colorado Blue (LWF Blacks Fork)",
+                                   "Coastal", "Bonneville (Diamond Fork River)", "Bonneville (Big Wash Creek)", 
+                                   "Bear River Bonneville"))
+
+# Stacked bar plot (Percent complete BUSCOs)
+
+buscoBar <- pivot_longer(busco, cols = `Complete (Single)`:Missing, names_to = "category", values_to = "percent") %>%
+  select(species, category, percent) %>%
+  mutate(type = factor(category, levels = c("Missing", "Fragmented",
+                                            "Complete (Duplicate)",
+                                            "Complete (Single)")))
+
+path = "~/compute/cutthroat/figures/busco_results.jpg"
+
+plot <- ggplot(buscoBar, aes(x = percent, y = species, fill = type)) +
+  geom_bar(stat = "identity", width = .8) +
+  scale_fill_discrete(breaks = c("Complete (Single)", 
+                                 "Complete (Duplicate)", 
+                                 "Fragmented", "Missing"), name = "") +
+  ylab("") +
+  xlab("Percent BUSCO Genes") +
+  theme_classic() +
+  theme(axis.text.y = element_text(size = 9), legend.position = "bottom") 
+
+ggsave(plot, filename = path, height = 5, width = 7)
+
+```
+
+# Phylogenetic reconstruction
+
+## Concatenated Phylogeny
+
+The following script creates a concatenated maximum likelihood phylogeny. We ran the script multiple times using different numbers of genes to evaluate how gene number / presence of missing data impacted the results.
+
+```{bash eval=FALSE}
+
+mamba activate phylogeny
+
+sbatch phylogeny.sh insert_run_name number_of_genes 
+
+# sbatch phylogeny.sh 17sp_13 17|16|15|14|13
+# sbatch phylogeny.sh 17sp_8 17|16|15|14|13|12|11|10|9|8
+# sbatch phylogeny.sh 17sp_4 17|16|15|14|13|12|11|10|9|8|7|6|5|4
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+#SBATCH --time=10:00:00 
+#SBATCH --ntasks=12
+#SBATCH --nodes=1  
+#SBATCH --mem-per-cpu=4GB  
+#SBATCH -J "phylogeny"  
+
+# Set up directories
+
+run=${1}
+
+dir="/home/kokko/compute/cutthroat/data"
+
+cd ${dir}/phylogeny/
+
+mkdir ${run}
+cd ${run}
+
+cp ~/compute/cutthroat/code/phylogeny.sh . # keep track of what code was run each time
+
+mkdir aligned
+mkdir clipped
+mkdir genes
+mkdir iqtree
+mkdir unaligned
+mkdir logs
+mkdir corrected
+
+cd unaligned
+mkdir clstr
+
+# Clean up everything
+
+cd ${dir}/phylogeny/${run}/unaligned 
+rm *.fas
+rm *.pass.fas
+rm *.fail.fas
+
+cd ${dir}/phylogeny/${run}/unaligned/clstr
+rm *
+
+cd ${dir}/phylogeny/${run}/aligned 
+rm *.fas
+
+cd ${dir}/phylogeny/${run}/clipped 
+rm *.fas
+rm *.xls
+rm *.log
+rm *.txt
+
+cd ${dir}/phylogeny/${run}/iqtree
+rm *
+
+# Determine how many species share each gene
+
+printf "This analysis uses the following number of genes ${2}\n\n"
+
+samples='BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Coastal Coho Greenback Humboldt Lahontan LWFBlackCR Pink Rainbow Riogrande UMCR Westslope Yellowstone'
+
+cd ${dir}/phylogeny/${run}/genes
+
+> genes.txt
+
+cd ${dir}/annotation/busco
+
+for species in ${samples}
+do
+  cd ${species}/run_actinopterygii_odb10/busco_sequences/single_copy_busco_sequences
+  ls | grep '.fna' >> ${dir}/phylogeny/${run}/genes/genes.txt
+  cd ${dir}/annotation/busco
+done
+
+cd ${dir}/phylogeny/${run}/genes
+
+# Create a list of all genes from all species and generate counts of each gene
+
+sort genes.txt | uniq -c | sed 's/^\s*//' > gene_counts.txt
+
+# Choose genes to use in analysis (i.e., 17 or 17|16 and so forth)
+ 
+genes="$(grep -wE "${2}" gene_counts.txt | cut -d ' ' -f2)" 
+
+# Create file for each BUSCO gene with sequences from each lineage 
+
+# When genes are missing for a species, grep will output a "no such file or directory" error that can be ignored.
+
+for gene in ${genes}
+do
+  printf "Processing ${gene} \n"
+  samp=`basename ${gene} .fna`
+  > ${dir}/phylogeny/${run}/unaligned/${samp}.fas
+  for species in ${samples}
+  do
+    cd ${dir}/annotation/busco/${species}/run_actinopterygii_odb10/busco_sequences/single_copy_busco_sequences
+    check=`ls | grep -wE ${gene}`
+    if [[ -z "${check}" ]] # if no sequence output blank line
+    then
+      seq=''
+      printf ">${species}\n${seq}\n" >> ${dir}/phylogeny/${run}/unaligned/${samp}.fas
+    else
+      seq=`perl -pe '$. > 1 and /^>/ ? print "\n" : chomp' ${gene} | tail -n1`
+      printf ">${species}\n${seq}\n" >> ${dir}/phylogeny/${run}/unaligned/${samp}.fas
+    fi
+  done
+done
+
+# Use Cd-hit-est to identify genes with multiple clusters indicating presence of paralogs. Only retain genes with one cluster.
+
+cd ${dir}/phylogeny/${run}/unaligned/
+
+total=`ls | grep -c ".fas"`
+
+for gene in *.fas # filter by ingroup first
+do
+  printf "Clustering ${gene} using ingroup \n"
+  > "../logs/cdhitest_ingroup.log"
+  samp=`basename ${gene} .fas`
+  > ${samp}_ingroup.fas
+  for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 Coastal Greenback Humboldt Lahontan LWFBlackCR Riogrande UMCR Westslope Yellowstone
+  do
+    grep -w -A 1 "${species}" ${gene} >> ${samp}_ingroup.fas
+  done
+  cd-hit-est -i "${samp}_ingroup.fas" -o "clstr/${samp}_ingroup" -c .95 -n 8 -d 100 > "../logs/cdhitest_ingroup.log" # use more stringent clustering paramters for ingroup
+  if grep -q "1  clusters" ../logs/cdhitest_ingroup.log; then
+    cat "${gene}" > "${samp}_ingroup.pass.fas"
+  else
+    cat "${gene}" > "${samp}_ingroup.fail.fas"
+  fi
+done
+
+for gene in *_ingroup.pass.fas # filter another time with outgroup included
+do
+  printf "Clustering ${gene} using outgroup \n"
+  > "../logs/cdhitest.log"
+  samp=`basename ${gene} _ingroup.pass.fas`
+  cd-hit-est -i "$gene" -o "clstr/$samp" -c .80 -n 5 -d 100 > "../logs/cdhitest.log" # use less stringent clustering parameters for outgroup
+  if grep -q "1  clusters" ../logs/cdhitest.log; then
+    cat "${gene}" > "${samp}.pass.fas"
+  else
+    cat "${gene}" > "${samp}.fail.fas"
+  fi
+done
+
+ingroup_pass=`ls | grep -c "_ingroup.pass.fas"`
+ingroup_fail=`ls | grep -c "_ingroup.fail.fas"`
+
+rm *_ingroup.pass.fas
+rm *_ingroup.fail.fas
+
+outgroup_pass=`ls | grep -c ".pass.fas"`
+outgroup_fail=`ls | grep -c ".fail.fas"`
+
+> filter_results.txt
+
+printf "total ${total}\n" >> filter_results.txt
+printf "ingroup_pass ${ingroup_pass}\n" >> filter_results.txt
+printf "ingroup_fail ${ingroup_fail}\n" >> filter_results.txt
+printf "outgroup_pass ${outgroup_pass}\n" >> filter_results.txt
+printf "outgroup_fail ${outgroup_fail}\n" >> filter_results.txt
+
+# Remove headers followed by blank lines
+
+for gene in *.pass.fas
+do
+  samp=`basename ${gene} .pass.fas`  
+  awk '/^>/ {if (seq && header) {print header; print seq}; \
+    header=$0; seq=""; next} {seq = seq $0} END {if (header && seq) \
+    {print header; print seq}}' \
+    ${gene} > ${samp}.fltr.fas
+done
+
+# Run MAFFT alignment for each gene 
+
+cd ${dir}/phylogeny/${run}/unaligned/
+
+for gene in *.fltr.fas
+do
+  printf "Aligning ${gene} \n"
+  samp=`basename ${gene} .fltr.fas`
+  mafft --adjustdirection ${gene} > "../aligned/${samp}.aligned.fas" # mafft automatically determines if sequences are reverse complement
+  sed -i 's/_R_//g' "../aligned/${samp}.aligned.fas"
+done
+
+# Remove columns of sequences that are missing > 80% using Clipkit
+
+cd ${dir}/phylogeny/${run}/aligned/
+
+for gene in *.fas
+do
+  printf "Clipping ${gene} \n"
+  samp=`basename ${gene} .fas`
+  clipkit ${gene} -m gappy -g .80 -o "../clipped/${samp}.clipped.fas" 
+done 
+
+# Rebuild each MSA such that it includes all species (including those with missing data)
+
+cd ${dir}/phylogeny/${run}/clipped/
+
+for gene in *.clipped.fas
+do
+  samp=`basename ${gene} .clipped.fas`
+  > ${samp}.all.fas
+  seqkit seq -w 0 ${gene} > temp.fas
+  length=`grep -A 1 ">" temp.fas | tail -n 1 | awk '{print length}'`
+  gap=`printf '%*s' "$length" | tr ' ' "-"`
+  for species in ${samples}
+  do
+    if grep -q ${species} temp.fas; then
+      grep -A 1 ${species} temp.fas >> temp2.fas
+    else
+      printf ">${species}\n${gap}\n" >> temp2.fas
+    fi
+  done
+  seqkit seq -w 61 temp2.fas > ${samp}.all.fas
+  rm temp.fas
+  rm temp2.fas
+done
+
+mkdir clip && mv *.clipped.fas clip
+
+# Concatenate your alignment and create partition definition file
+
+cd ${dir}/phylogeny/${run}/clipped
+
+perl /home/kokko/compute/cutthroat/code/FASconCAT_v1.11.pl -i -s # FASconCAT expects files to be named .fas
+
+python /home/kokko/compute/cutthroat/code/extract_partition_file_from_fcc.py FcC_info.xls
+
+# Generate best partition defintion file
+
+cd ${dir}/phylogeny/${run}/iqtree
+
+iqtree2 -s ${dir}/phylogeny/${run}/clipped/FcC_smatrix.fas \
+  -spp ${dir}/phylogeny/${run}/clipped/partition_def.txt \
+  -T AUTO -safe -pre cutthroat_partition -m TESTMERGEONLY
+
+# Infer gene models and phylogeny 
+
+iqtree2 -s ${dir}/phylogeny/${run}/clipped/FcC_smatrix.fas \
+  -spp cutthroat_partition.best_scheme.nex \
+  -T AUTO -safe -pre cutthroat_concatenated -m MFP -bb 1000 -bnni
+
+# Prepare files to estimate individual locus trees
+
+cd ${dir}/phylogeny/${run}/clipped/
+
+# iqtree will not accept files with taxa that only have gaps
+
+for file in *.all.fas
+do
+  gene=`basename ${file} .aligned.all.fas`
+  seqkit seq -w 0 ${file} \
+    | awk '/^>/ {header=$0; getline seq} {if (seq !~ /^-+$/) {print header ORS seq}}' |
+    seqkit seq -w 61 > ../corrected/${gene}.fas
+done
+
+cd ${dir}/phylogeny/${run}/corrected
+ls *.fas > locus_alignments.txt
+
+array=`wc -l locus_alignments.txt`
+printf "Use ${array} arrays\n"
+
+cd ${dir}/phylogeny/
+mv slurm-${SLURM_JOB_ID}.out ${dir}/phylogeny/${run}/
+
+```
+
+Determine the number of genes used in the phylogenies for each species. 
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+for file in 17sp_13 17sp_8 17sp_4 
+do
+  cd ~/compute/cutthroat/data/phylogeny/${file}
+  > gene_counts.txt
+  cd unaligned/
+  total=`ls | grep -cE ".+[0-9].fas"`
+  pass=`ls | grep -cE "*.pass.fas"`
+  fail=$((total-pass))
+  
+  printf "Processing ${file}\n"
+  printf "${file}\n" >> ../gene_counts.txt
+  printf "total ${total}\n" >> ../gene_counts.txt
+  printf "pass ${pass}\n" >> ../gene_counts.txt
+  printf "fail ${fail}\n" >> ../gene_counts.txt
+  
+  for species in BearRiver BeaverCR BobtailCR Bonneville1 Bonneville2 \
+    Coastal Coho Greenback Humboldt Lahontan LWFBlackCR Pink Rainbow \
+    Riogrande UMCR Westslope Yellowstone
+  do
+    i=0
+    for gene in *.pass.fas
+    do
+      check=`grep -P ">${species}" -A 1 ${gene} | tail -n1`
+      if [[ -z "${check}" ]]
+      then
+        ((i+=0))
+      else
+        ((i+=1))
+      fi
+    done
+    printf "${species} ${i}\n" >> ../gene_counts.txt
+  done
+done
+
+```
+
+Copy final concatenated-based species trees into folder to push to github
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+cd ~/compute/cutthroat/data/phylogeny
+
+for dir in 17sp_13 17sp_8 17sp_4
+do
+  cd ~/compute/cutthroat/data/phylogeny/${dir}/iqtree/
+  cp cutthroat_concatenated.contree ../../${dir}_concat.tre # changed to .tre to open easily in FigTree directly from Cyberduck
+done
+
+```
+
+## Consensus Phylogeny
+
+Generate gene trees using IQtree2. 
+
+Because IQtree2 can get stuck in a local optima, we modified the settings such that the program is run ten times and retains the tree with the highest likelihood score. We also modified the stopping rule and perturbation strength. We also ran ultrafast bootstrap approximation and the SH-like approximate likelihood ratio tests.
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+mamba activate phylogeny
+
+for file in 17sp_13 17sp_8 17sp_4 # see below about editing iqtree.sh
+do
+  cd ~/compute/cutthroat/data/phylogeny/${file} && mkdir astral 
+  cd astral
+  for num in 1 2 # when testing we ran this script multiple times by modifying this for loop
+  do
+    mkdir trees${num} 
+    cd trees${num}
+    sbatch ~/compute/cutthroat/code/iqtree.sh ${file}
+    cd ..
+  done
+done
+
+```
+
+```{bash eval=FALSE}
+
+#iqtree.sh
+
+#!/bin/bash
+
+# Provide correct number of genes for array using the number determined in the script above
+
+#SBATCH --time=00:15:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --mem-per-cpu=1G
+#SBATCH --array=1-1827
+#SBATCH --job-name=iqtree_array
+
+export PATH=$PATH:~/programs/
+
+#parses locus_alignments.txt for array
+align=$(head -n $SLURM_ARRAY_TASK_ID \
+  ~/compute/cutthroat/data/phylogeny/${1}/corrected/locus_alignments.txt | tail -n1)
+
+iqtree2 -s ~/compute/cutthroat/data/phylogeny/${1}/corrected/$align \ 
+  -m MFP -pre `basename $align .fas` --runs 10 -nstop 500 \
+  -pers '.2' -alrt 1000 -bb 1000 -bnni -keep-ident
+
+```
+
+Collapse nodes with low support (ufbootstrap <30 and SH-like approximate likelihood ratio tests == 0) into polytomies.  
+
+```{bash eval=FALSE}
+
+mamba activate phylogeny
+
+for dir in 17sp_13 17sp_8 17sp_4 
+do
+  cd ~/compute/cutthroat/data/phylogeny/${dir}/astral
+  for num in 1 2
+  do
+    cd trees${num}
+    for file in *treefile
+    do
+      iqtree2 -t ${file} -minsupnew .1/30.1
+    done
+    cd ~/compute/cutthroat/data/phylogeny/${dir}/astral
+  done
+done
+
+```
+
+IQtree2 arbitrarily bifurcates polytomies and sets branch lengths to 0 (i.e., soft polytomy). Since Astral III doesn't seem to recognize this coding of polytomies, we used the script below to generate hard polytomies in the treefiles.
+
+```{bash eval=FALSE}
+
+mamba activate rscript
+
+for file in 17sp_13 17sp_8 17sp_4 
+do
+  cd ~/compute/cutthroat/data/phylogeny/${file}/astral
+  for num in 1 2 
+  do
+    cd trees${num}
+    ls | grep "collapsed" > trees.txt
+    sbatch ~/compute/cutthroat/code/polytomy.sh ${file} trees${num}
+    cd ..
+  done
+done
+
+```
+
+```{bash eval=FALSE}
+
+#polytomy.sh
+
+#!/bin/bash
+
+# Provide correct number of genes for array using the number determined in the script above
+
+#SBATCH --time=00:05:00
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --mem-per-cpu=1G
+#SBATCH --array=1-1827
+#SBATCH --job-name=polytomy
+
+export PATH=$PATH:~/programs/
+
+#parses trees.txt for array
+align=$(head -n $SLURM_ARRAY_TASK_ID ~/compute/cutthroat/data/phylogeny/${1}/astral/${2}/trees.txt | tail -n1)
+
+Rscript ~/compute/cutthroat/code/polytomy.R ~/compute/cutthroat/data/phylogeny/${1}/astral/${2}/${align}
+
+```
+
+```{r eval=FALSE}
+
+#polytomy.R
+
+library(ape)
+library(phytools)
+library(tidyverse)
+
+args = commandArgs(trailingOnly=TRUE)
+
+path <- args[1]
+file <- str_split(path, "\\.")
+
+tree <- read.tree(path)
+
+tree2 <- di2multi.simmap(tree, tol=1e-08)
+
+write.tree(tree2, file=paste0(file[[1]][1],"_corrected.tre"))
+
+```
+
+Generate consensus phylogeny using Astral III
+
+```{bash eval=FALSE}
+
+cd ~/compute/cutthroat/data/phylogeny/
+
+for file in 17sp_13 17sp_8 17sp_4 
+do
+  for num in 1 2 
+  do
+    cd ~/compute/cutthroat/data/phylogeny/${file}/astral/trees${num}
+    sbatch ~/compute/cutthroat/code/astral.sh trees${num}
+    cd ..
+  done
+done
+
+```
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+cat *corrected.tre > all.tre # concatenate all of the gene trees into a single input file
+
+java -jar ~/programs/ASTRAL-5.7.1/Astral/astral.5.7.1.jar -i all.tre -o astral.tre
+
+cp astral.tre ../$1.tre && cd ..
+
+```
+
+Copy final coalescent-based species trees into folder to push to github
+
+```{bash eval=FALSE}
+
+#!/bin/bash
+
+cd ~/compute/cutthroat/data/phylogeny
+
+for dir in 17sp_13 17sp_8 17sp_4
+do
+  cd ~/compute/cutthroat/data/phylogeny/${dir}/astral/
+  cp trees1.tre ../../${dir}_coalescent.tre 
+done
+
+```
+
+These final treefiles were rooted and visualized using FigTree
