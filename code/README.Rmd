@@ -1,0 +1,12 @@
+---
+title: "readme"
+author: "Peter Searle"
+date: "2024-05-14"
+output: html_document
+---
+
+# Code used for transcriptome assembly, ortholog identification, multiple sequence alignments, and phylogenetic reconstructions
+
+Description: 
+
+Cutthroat_Trout_Phylogeny.Rmd - Contains all code used for this project
