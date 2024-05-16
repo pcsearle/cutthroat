@@ -1610,4 +1610,25 @@ done
 
 ```
 
-These final treefiles were rooted and visualized using FigTree
+Update names in files prior to rooting (Pink as outgroup) and visualizing trees using FigTree. 
+
+```{bash eval=FALSE}
+
+cd ~/compute/cutthroat/data/phylogeny
+
+for file in 17sp_4_coalescent.tre 17sp_4_concat.tre 17sp_8_coalescent.tre 17sp_8_concat.tre 17sp_13_coalescent.tre 17sp_13_concat.tre
+do
+    sed -i '' 's/BearRiver/Bear River Bonneville/g' ${file}
+    sed -i '' 's/BeaverCR/Colorado Green {Beaver Creek}/' ${file}
+    sed -i '' 's/BobtailCR/Colorado Green {Bobtail Creek}/' ${file}
+    sed -i '' 's/Riogrande/Rio Grande/' ${file}
+    sed -i '' 's/LWFBlackCR/Colorado Blue {LWF Blacks Fork}/' ${file}
+    sed -i '' 's/UMCR/Colorado Blue {UM Creek}/' ${file}
+    sed -i '' 's/Bonneville1/Bonneville {Diamond Fork River}/' ${file}
+    sed -i '' 's/Bonneville2/Bonneville {Big Wash Creek}/' ${file}
+    sed -i '' 's/Coho/Coho Salmon/' ${file}
+    sed -i '' 's/Pink/Pink Salmon/' ${file}
+    sed -i '' 's/Rainbow/Rainbow Trout/' ${file}
+done
+
+```
