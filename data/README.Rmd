@@ -35,7 +35,7 @@ data/phylogeny - Final concatenated and coalescent-based species trees
   17sp_4_coalescent.tre - Coalescent species tree generated with genes with 4 or more specimens represented
 
 data/raw/ncbi - Information to match raw SRA files with original file names used in code.
-  ncbi_files.txt - Note that the .bam files used for the transcriptome assembly are already demultiplexed because NCBI requested I provide those files, not the original movieX.subreads.bam file (which included samples multiplexed on the same run). You can run the transcriptome assembly code using IsoSeq3 starting at the "Refine" step.
+  ncbi_files.tsv - Note that the .bam files used for the transcriptome assembly are already demultiplexed because NCBI requested I provide those files, not the original movieX.subreads.bam file (which included samples multiplexed on the same run). You can run the transcriptome assembly code using IsoSeq3 starting at the "Refine" step.
   
 
   
