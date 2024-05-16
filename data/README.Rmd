@@ -25,7 +25,9 @@ data/assembly/cd-hit/transcriptomes - Final assembled transcriptomes used for ph
   Westslope.fasta.gz
   Yellowstone.fasta.gz
   ncbi_files.tsv -  Information to match TSA files with original file names used in code. 
-  
+
+The assembled transcriptomes on NCBI are slightly different than the assembled transcriptomes available in this repository. NCBI required several changes (i.e., removal of sequences < 200 bp and UniVec vector removal) to the original files.
+
 data/phylogeny - Final concatenated and coalescent-based species trees
   17sp_13_concat.tre - Concatenated species tree generated with genes with 13 or more specimens represented
   17sp_13_coalescent.tre - Coalescent species tree generated with genes with 13 or more specimens represented
