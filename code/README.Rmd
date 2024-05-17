@@ -10,4 +10,4 @@ output: html_document
 Description: 
 
 Cutthroat_Trout_Phylogeny.Rmd - Contains all code used for this project
-tree2.R - Code to generate trees used in figure 2
+figure2.R - Code to generate trees used in figure 2
