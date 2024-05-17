@@ -1,10 +1,7 @@
-code/astral.sh
+code/cleanMe.sh
 code/extract_partition_file_from_fcc.py
 code/FASconCAT_v1.11.pl
 code/other/
-code/phylogeny.sh
-code/polytomy.R
-code/polytomy.sh
 data/annotation
 data/assembly/cd-hit/BearRiver
 data/assembly/cd-hit/BeaverCR
@@ -20,10 +17,12 @@ data/assembly/cd-hit/LWFBlackCR
 data/assembly/cd-hit/Pink
 data/assembly/cd-hit/Rainbow
 data/assembly/cd-hit/Riogrande
-data/assembly/cd-hit/stat.txt
+data/assembly/cd-hit/stats.txt
 data/assembly/cd-hit/UMCR
 data/assembly/cd-hit/Westslope
 data/assembly/cd-hit/Yellowstone
+data/assembly/cd-hit/transcriptomes/files.txt
+data/assembly/cd-hit/transcriptomes/ncbi
 data/assembly/combine
 data/assembly/isoseq3
 data/assembly/spades
@@ -37,5 +36,9 @@ data/phylogeny/17sp_tar
 data/phylogeny/17sp_coalescent.tre
 data/phylogeny/17sp_concat.tre
 data/qc
-data/raw
-
+data/raw/illumina
+data/raw/ncbi/*.txt
+data/raw/ncbi/*.bam
+data/raw/ncbi/*.fq.gz
+data/raw/pacbio
+data/figures

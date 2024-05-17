@@ -1,4 +1,4 @@
-# Create Behnke Phylogeny
+# Robert Behnke's phylogeny (See Figure 2, Shiozawa et al 2018)
 
 library(ggtree)
 library(ggplot2)
@@ -20,7 +20,6 @@ df1 <- data.frame(taxa = tree1$tip.label,
 p1 <- ggtree(tree1, branch.length = "none") +
   xlim(0, 10) + #Change to 19 for Trees.png
   geom_tiplab() 
-  #geom_text(aes(label = node))
   
 
 p1 <- p1 %<+% df1 +
@@ -39,7 +38,7 @@ p1 <- ggtree::rotate(p1, 15)
 
 ggsave("Tree1.png", plot = p1, path = "~/compute/cutthroat/figures/", width = 4, height = 4)
 
-# Generate Shiozawa et al 2018
+# Shiozawa et al 2018 Phylogeny (See Figure 13)
 
 library(ggtree)
 library(ggplot2)
