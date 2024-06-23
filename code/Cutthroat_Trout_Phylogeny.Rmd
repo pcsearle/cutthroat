@@ -1073,7 +1073,7 @@ plot <- ggplot(buscoBar, aes(x = percent, y = species, fill = type)) +
   theme_classic() +
   theme(axis.text.y = element_text(size = 9), legend.position = "bottom") 
 
-ggsave(plot, filename = path, height = 5, width = 7)
+ggsave(plot, filename = path, height = 5, width = 8)
 
 ```
 
