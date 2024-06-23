@@ -1042,14 +1042,14 @@ busco <- read.csv(file = path, sep = " ") %>%
 busco$species <- c("Bear River Bonneville", "Colorado Green (Beaver Creek)",
                    "Colorado Green (Bobtail Creek)", "Bonneville (Diamond Fork River)", 
                    "Bonneville (Big Wash Creek)", "Coastal", "Greenback", "Humboldt", "Lahontan", 
-                   "Colorado Blue (LWF Blacks Fork)", "Rio Grande","Colorado Blue (UM Creek)", 
+                   "Colorado Blue (LWF Blacks Fork)", "Rio Grande","Colorado Blue (RF UM Creek)", 
                    "Westslope", "Yellowstone")
 
 busco$species <- factor(busco$species,
                         levels = c("Yellowstone", "Westslope", "Rio Grande",
                                    "Lahontan", "Humboldt", "Greenback", 
                                    "Colorado Green (Bobtail Creek)", "Colorado Green (Beaver Creek)", 
-                                   "Colorado Blue (UM Creek)", "Colorado Blue (LWF Blacks Fork)",
+                                   "Colorado Blue (RF UM Creek)", "Colorado Blue (LWF Blacks Fork)",
                                    "Coastal", "Bonneville (Diamond Fork River)", "Bonneville (Big Wash Creek)", 
                                    "Bear River Bonneville"))
 
